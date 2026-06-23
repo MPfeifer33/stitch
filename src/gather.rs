@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::process::Command;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 use crate::StitchError;
@@ -15,6 +15,7 @@ pub struct ProjectContext {
     pub key_files: Vec<KeyFile>,
     pub recent_commits: Vec<CommitSummary>,
     pub evidence_sources: EvidenceSources,
+    pub sentinel_summary: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,6 +54,8 @@ pub struct EvidenceSources {
     pub latch: bool,
     pub probe: bool,
     pub atlas: bool,
+    pub sentinel: bool,
+    pub contract: bool,
 }
 
 /// Gather all available context about a project.
@@ -77,6 +80,8 @@ pub fn gather_context(repo: &Path, depth: usize, include_contents: bool) -> Resu
     let recent_commits = gather_recent_commits(repo, 10);
     let evidence_sources = detect_evidence_sources(repo);
 
+    let sentinel_summary = load_sentinel_summary(repo);
+
     Ok(ProjectContext {
         project_name,
         project_type,
@@ -85,6 +90,7 @@ pub fn gather_context(repo: &Path, depth: usize, include_contents: bool) -> Resu
         key_files,
         recent_commits,
         evidence_sources,
+        sentinel_summary,
     })
 }
 
@@ -122,8 +128,15 @@ pub fn generate_brief(ctx: &ProjectContext) -> String {
     if ctx.evidence_sources.latch { sources.push("latch"); }
     if ctx.evidence_sources.probe { sources.push("probe"); }
     if ctx.evidence_sources.atlas { sources.push("atlas"); }
+    if ctx.evidence_sources.sentinel { sources.push("sentinel"); }
+    if ctx.evidence_sources.contract { sources.push("contract"); }
     if !sources.is_empty() {
         brief.push(format!("Evidence: {}", sources.join(", ")));
+    }
+
+    // Sentinel risk summary
+    if let Some(ref summary) = ctx.sentinel_summary {
+        brief.push(summary.clone());
     }
 
     brief.join("\n")
@@ -323,6 +336,31 @@ mod tests {
     }
 }
 
+#[derive(Deserialize)]
+struct SentinelMatrixSummary {
+    summary: SentinelSummaryInner,
+}
+
+#[derive(Deserialize)]
+struct SentinelSummaryInner {
+    tracked_files: usize,
+    high_risk: usize,
+    medium_risk: usize,
+}
+
+fn load_sentinel_summary(repo: &Path) -> Option<String> {
+    let path = repo.join(".agent-sentinel").join("matrix.json");
+    let content = std::fs::read_to_string(path).ok()?;
+    let matrix: SentinelMatrixSummary = serde_json::from_str(&content).ok()?;
+    let s = &matrix.summary;
+    if s.high_risk > 0 || s.medium_risk > 0 {
+        Some(format!("Sentinel: {} tracked, {} high-risk, {} medium-risk",
+            s.tracked_files, s.high_risk, s.medium_risk))
+    } else {
+        Some(format!("Sentinel: {} tracked files, all low-risk", s.tracked_files))
+    }
+}
+
 fn detect_evidence_sources(repo: &Path) -> EvidenceSources {
     EvidenceSources {
         project_md: repo.join("PROJECT.md").exists(),
@@ -331,5 +369,7 @@ fn detect_evidence_sources(repo: &Path) -> EvidenceSources {
         latch: repo.join(".latch.db").exists(),
         probe: repo.join(".agent-probe").exists(),
         atlas: repo.join(".agent-atlas").exists(),
+        sentinel: repo.join(".agent-sentinel").exists(),
+        contract: repo.join(".agent-contract.toml").exists(),
     }
 }
