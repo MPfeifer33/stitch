@@ -105,6 +105,9 @@ pub fn generate_brief(ctx: &ProjectContext) -> String {
 
     if !ctx.recent_commits.is_empty() {
         brief.push(format!("Recent: {} ({})", ctx.recent_commits[0].subject, ctx.recent_commits[0].sha));
+        if ctx.recent_commits.len() > 1 {
+            brief.push(format!("History: {} commits in log", ctx.recent_commits.len()));
+        }
     }
 
     // Key files found
