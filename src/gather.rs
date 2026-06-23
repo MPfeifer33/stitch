@@ -57,6 +57,14 @@ pub struct EvidenceSources {
 
 /// Gather all available context about a project.
 pub fn gather_context(repo: &Path, depth: usize, include_contents: bool) -> Result<ProjectContext, StitchError> {
+    if !repo.exists() {
+        return Err(StitchError::Validation(format!("repo path does not exist: {}", repo.display())));
+    }
+    if !repo.is_dir() {
+        return Err(StitchError::Validation(format!("repo path is not a directory: {}", repo.display())));
+    }
+    let depth = if depth == 0 { 1 } else { depth };
+
     let project_name = repo.file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
@@ -205,8 +213,10 @@ fn gather_key_files(repo: &Path, include_contents: bool) -> Vec<KeyFile> {
 }
 
 fn gather_recent_commits(repo: &Path, limit: usize) -> Vec<CommitSummary> {
+    // Use ASCII unit separator (\x1f) as delimiter to avoid corruption
+    // from commit messages containing '|'
     let output = Command::new("git")
-        .args(["log", &format!("-{}", limit), "--format=%h|%s|%ai"])
+        .args(["log", &format!("-{}", limit), "--format=%h\x1f%s\x1f%ai"])
         .current_dir(repo)
         .output();
 
@@ -215,7 +225,7 @@ fn gather_recent_commits(repo: &Path, limit: usize) -> Vec<CommitSummary> {
             String::from_utf8_lossy(&o.stdout)
                 .lines()
                 .filter_map(|line| {
-                    let parts: Vec<&str> = line.splitn(3, '|').collect();
+                    let parts: Vec<&str> = line.splitn(3, '\x1f').collect();
                     if parts.len() >= 3 {
                         Some(CommitSummary {
                             sha: parts[0].to_string(),
