@@ -232,6 +232,84 @@ fn gather_recent_commits(repo: &Path, limit: usize) -> Vec<CommitSummary> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn init_repo(dir: &std::path::Path) {
+        std::process::Command::new("git").args(["init"]).current_dir(dir).output().unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        std::fs::write(dir.join("PROJECT.md"), "# Test Project").unwrap();
+        std::process::Command::new("git").args(["add", "."]).current_dir(dir).output().unwrap();
+        std::process::Command::new("git").args(["commit", "-m", "init"]).current_dir(dir).output().unwrap();
+    }
+
+    #[test]
+    fn gather_context_basic() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(tmp.path());
+        let ctx = gather_context(tmp.path(), 3, false).unwrap();
+        assert_eq!(ctx.project_type, "rust");
+        assert!(!ctx.key_files.is_empty());
+        assert!(ctx.git_state.is_some());
+    }
+
+    #[test]
+    fn gather_context_with_contents() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(tmp.path());
+        let ctx = gather_context(tmp.path(), 3, true).unwrap();
+        let project_md = ctx.key_files.iter().find(|f| f.path == "PROJECT.md");
+        assert!(project_md.is_some());
+        assert!(project_md.unwrap().content.contains("Test Project"));
+    }
+
+    #[test]
+    fn generate_brief_includes_project_info() {
+        let tmp = TempDir::new().unwrap();
+        init_repo(tmp.path());
+        let ctx = gather_context(tmp.path(), 3, false).unwrap();
+        let brief = generate_brief(&ctx);
+        assert!(brief.contains("rust"));
+        assert!(brief.contains("PROJECT.md"));
+    }
+
+    #[test]
+    fn detect_project_type_unknown() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(detect_project_type(tmp.path()), "unknown");
+    }
+
+    #[test]
+    fn evidence_sources_detection() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("PROJECT.md"), "# test").unwrap();
+        std::fs::create_dir(tmp.path().join(".agent-witness")).unwrap();
+        let sources = detect_evidence_sources(tmp.path());
+        assert!(sources.project_md);
+        assert!(sources.witness);
+        assert!(!sources.latch);
+    }
+
+    #[test]
+    fn gather_structure_respects_depth() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("a/b/c")).unwrap();
+        std::fs::write(tmp.path().join("a/b/c/deep.txt"), "deep").unwrap();
+        let shallow = gather_structure(tmp.path(), 1);
+        let deep = gather_structure(tmp.path(), 10);
+        assert!(deep.len() >= shallow.len());
+    }
+
+    #[test]
+    fn non_git_repo_returns_no_git_state() {
+        let tmp = TempDir::new().unwrap();
+        let state = gather_git_state(tmp.path());
+        assert!(state.is_none());
+    }
+}
+
 fn detect_evidence_sources(repo: &Path) -> EvidenceSources {
     EvidenceSources {
         project_md: repo.join("PROJECT.md").exists(),
